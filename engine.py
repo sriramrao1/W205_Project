@@ -20,103 +20,104 @@ class FoodSearchEngine:
             logger.info("Starting up the food search engine: ")
             self.sc = sc
 
+    ## This Function is to get the Top 5 restuarants that serve the <food> in <c> city
+    ## Learning Objective - Use Spark-SQL for this function
     def get_top_restaurants(self, c, food):
-        toprest = ""
+        
         try:
             sc = self.sc
             sqlc = SQLContext(sc)
-            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata")
-            #bdf.count() -- 77445
-            bscdf = bdf.select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
-            #bscdf.count()
-            restrdd = bscdf.rdd.filter(lambda x: "Restaurants" in x[2])
-            #restrdd.count() -- 25071
-            restdf = sqlc.createDataFrame(restrdd)
-            #restdf.count()
-            restdf.registerTempTable("business")
-
-            r = sqlc.read.json("/user/w205/project1/yelpreviewdata")
-            #r.count()
-            #r.printSchema()
-            reviewrdd = r.rdd.filter(lambda x: x[3] >2)
-            rf = sqlc.createDataFrame(reviewrdd)
-            #rf.count() -- 1774673
-            rf.registerTempTable("review")
-
-            #Running finalresults.py without an argument returns all the words in the stream and their total count of occurrences,
             food = food
             city = c
+            
+            # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
+            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
+ 
+            # Just filter the restaurant business data (COUNT OF RECORDS = 25071)
+            #restrdd = bdf.rdd.filter(lambda x: "Restaurants" in x[2])
+ 
+            # Store the restaurant business data in a temp table for querying
+            bdf.registerTempTable("business")
+            
+            # Read the Yelp Review data JSON file from HDFS and store all the columns in a dataframe
+            rdf = sqlc.read.json("/user/w205/project1/yelpreviewdata")
+            #rdf.printSchema()
+
+            # Filter only the rows where the user rating is greater than 2 
+            # Since we are interested only in the top rated restaurants, we filter out lower rated reviews
+            #reviewrdd = rdf.rdd.filter(lambda x: x[3] >2)
+
+            # Store the review data in a temp table for querying
+            #sqlc.createDataFrame(reviewrdd).registerTempTable("review")
+
+            rdf.registerTempTable("review")
+            
+            #Run the query to get the top 5 restaurants 
             query = "select b.business_id, b.name as Restaurant_Name, count(*) as Num_Reviews, avg(r.stars) as Average_Rating, b.city as City from review r, business b where r.text like '%"+food+"%' AND r.stars>2 and r.business_id=b.business_id AND b.city='"+city+"' group by b.business_id, b.name, b.city order by Num_Reviews desc limit 5"
             toprestaurants = sqlc.sql(query)
-            toprestaurants.show()
-            toprest = toprestaurants.collect()
+            #toprestaurants.show()
             #print("The query was "+query)
-            return toprest
+            return toprestaurants.collect()
 
                         
         except Exception as inst:
-            print(inst.args)
-            print(inst)
-            return toprest        
+            logger.info(inst.args)
+            logger.info(inst)
+            return "There was an error in the execution of this request. Please check the input and place the request again."
 
+    ## This Function is to get the Top 5 rated food items that are served in the <rest> restaurant in <c> city
+    ## Learning Objective - Use PySpark for this function
     def get_top_foods(self, c, rest):
 
         restreviewcontent = ""
         try:
             city = c
             restaurant = rest
-            #sc = SparkContext("local", "weblog app")
             sc=self.sc
             sqlc = SQLContext(sc)
-            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata")
+            # Read the Yelp Business data JSON file and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
+            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
             bdf.cache()
-            #bdf.count() -- 77445
-            bscdf = bdf.select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
-            bscdf.cache()
-            #bscdf.count()
-            restrdd = bscdf.rdd.filter(lambda x: restaurant in x[1])
-            restrdd.cache()
-            print("NUMBER OF RESTAURANTS: ")
-            #restrdd.count()
-            restcityrdd = restrdd.filter(lambda x: city in x[3])
-            restcityrdd.cache()
-
+            
+            # Filter or Search for the restaurant and city
+            restcityrdd = bdf.rdd.filter(lambda x: restaurant in x[1]).filter(lambda x: city in x[3])
+            logger.info("NUMBER OF RESTAURANTS: ")
+            
+            #if the restaurant is found in the city then obtain its review content from Yelp Review data JSON file
             if(restcityrdd.count() > 0):
                 bid = restcityrdd.collect()
                 businessid = bid[0].business_id
-                print("the business id of this restaurant is "+businessid)
+                logger.info("the business id of this restaurant is "+businessid)
 
+                # Read the Yelp Review data JSON file and store all the columns in a dataframe
+                ## There are only a few columns hence storing all columns
                 r = sqlc.read.json("/user/w205/project1/yelpreviewdata")
-                reviewrdd = r.rdd.filter(lambda x: x[3] >2)
-                reviewrdd.cache()
 
-                restreviewrdd = reviewrdd.filter(lambda x: businessid in x[0])
-                restreviewrdd.cache()
-                print("NUMBER OF BUSINESSES: ")
-                restreviewrdd.count()
-                #lineLengths = lines.map(lambda s: len(s))
-                #totalLength = lineLengths.reduce(lambda a, b: a + b)
-                userreview = restreviewrdd.map(lambda x: x[4])
-                userreview.cache()
-                restreviewcontent = userreview.reduce(lambda a, b: a+" "+b)
+                # Filter the Review data for the specific business ID and only get those reviews where the user rating is greater than 2
+                ## We are only interested in food dishes that are rated highly by the users, hence the filter for ratings
+                restreviewrdd = r.rdd.filter(lambda x: businessid in x[0]).filter(lambda x: x[3] >2)
+                
+                # Map (or extract) the review content from each row of data and concatenate them together
+                restreviewcontent = restreviewrdd.map(lambda x: x[4]).reduce(lambda a, b: a+" "+b)
+
+                #Encode the content as UTF-8 to account for special and non-latin characters 
                 restreviewcontent = restreviewcontent.encode('utf-8')
-                #restreviewcontent = map(lambda x:x.lower(),restreviewcontent)
-                print(restreviewcontent);
+                logger.info(restreviewcontent);
 
-                print("Before cleanup words ")
+                logger.info("Before cleanup words ")
                 #cleanup the words
                 #validwords = reviewcleanup(restreviewcontent)
                 words = restreviewcontent.split()
                                 
-                print("Before remove stop words ")
+                logger.info("Before remove stop words ")
                 #remove stop words
                 validwords = self.removeStopwords(words)
 
-                print("Before count word frequency ")
+                logger.info("Before count word frequency ")
                 #count the frequency of the mentions of food
                 wordfreqdict = self.wordListToFreqDict(validwords)
 
-                print("Before sort the words in decreasing order of frequency ")
+                logger.info("Before sort the words in decreasing order of frequency ")
                 #sort the words in decreasing order of frequency
                 wordfreqdict1 = self.sortFreqDict(wordfreqdict)
 
@@ -125,7 +126,6 @@ class FoodSearchEngine:
                 
                 return wordfreqdict1
              
-                                
             else:
                 resp = "Review data for the "+restaurant+" restaurant in "+city+" was not found. Please try another search"
                 print(resp)
@@ -184,4 +184,30 @@ class FoodSearchEngine:
     def ascii_string(s):
       return all(ord(c) < 128 for c in s)
 
-    
+    ## This Function is to get the Top 5 cities where there is opportunity to start a restaurant with the <category> food category
+    ## This is stretch goal for the project
+    def get_top_cities(self, category):
+        
+        try:
+            sc = self.sc
+            sqlc = SQLContext(sc)
+            foodcategory = category
+             
+            # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
+            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type', 'stars')
+ 
+            # Store the restaurant business data in a temp table for querying
+            bdf.registerTempTable("business")
+            
+            #Run the query to get the 5 cities with poor ratings for the food category
+            query = "select count(*) as Num_Restaurants, avg(stars) as Average_Rating, city as City from business b where b.categories[1] like '%"+foodcategory+"%' group by b.city order by Average_Rating, Num_Restaurants, City asc limit 50"
+            topcities = sqlc.sql(query)
+            #topcities.show()
+            #print("The query was "+query)
+            return topcities.collect()
+
+                        
+        except Exception as inst:
+            logger.info(inst.args)
+            logger.info(inst)
+            return "There was an error in the execution of this request. Please check the input and place the request again."        

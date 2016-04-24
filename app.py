@@ -43,6 +43,14 @@ def fsearch(city, food):
           
         print result
         return json.dumps(result)
+
+@app.route('/citysearch',methods=['POST','GET'])
+@app.route('/citysearch/<string:category>')
+def citysearch(category):
+        result = food_engine.get_top_cities(category)
+
+        #print result
+        return json.dumps(result, ensure_ascii=False).encode('utf8')
         
 
 def create_app(spark_context):
