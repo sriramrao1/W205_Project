@@ -41,7 +41,7 @@ def search(city, restaurant):
 def fsearch(city, food):
         result = food_engine.get_top_restaurants(city, food)
           
-        print result
+        #print result
         return json.dumps(result)
 
 @app.route('/citysearch',methods=['POST','GET'])

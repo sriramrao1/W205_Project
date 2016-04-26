@@ -1,0 +1,29 @@
+/data/start_postgres.sh
+sudo -u postgres psql
+CREATE USER w205 WITH PASSWORD 'postgres';
+CREATE DATABASE foodninjadb;
+ALTER DATABASE foodninjadb OWNER TO w205;
+GRANT ALL ON DATABASE foodninjadb to w205;
+CREATE DATABASE foodninjadb;
+\q
+
+psql -d foodninjadb 
+
+CREATE TABLE toprestaurants(
+CITY character(50) NOT NULL, FOOD character(50) NOT NULL,
+BUSINESSID Text, RESTAURANT character(50),
+NUMREVIEWS integer, AVGRATING decimal,
+PRIMARY KEY (CITY, FOOD, BUSINESSID));
+
+CREATE TABLE topfoods(
+CITY character(50) NOT NULL, RESTAURANT character(50) NOT NULL,
+FOOD character(50), NUMREVIEWS integer,
+PRIMARY KEY (CITY, RESTAURANT, FOOD));
+
+CREATE TABLE topcities(
+FOODCATEGORY character(50) NOT NULL, CITY character(50) NOT NULL, 
+NUMRERESTAURANTS integer, AVGRATING decimal,
+PRIMARY KEY (FOODCATEGORY, CITY));
+
+INSERT INTO toprestaurants (CITY, FOOD, BUSINESSID, RESTAURANT, NUMREVIEWS, AVGRATING) VALUES 
+('Las Vegas', 'pizza', 'abc', 'Secret Pizza', 2002, 4.53);

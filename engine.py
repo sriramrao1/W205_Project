@@ -7,63 +7,89 @@ import sys
 import re
 import logging
 import pprint
+import psycopg2
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+food = ""
 
 foodwords = [u'pizza',u'pancake',u'pancakes',u'taco',u'burger',u'pasta', u'BBQ', u'sausage', u'biscuit', u'lobster', u'chicken', u'steak', u'chili', u'salmon', u'salad', u'soup', u'dog', u'pork', u'fish']
 
 class FoodSearchEngine:
+           
     """ A Food Search Engine """
     def __init__(self, sc):
             """Init the food search engine given a Spark context"""
 
             logger.info("Starting up the food search engine: ")
             self.sc = sc
+            sqlc = SQLContext(sc)
+
+            
+            
 
     ## This Function is to get the Top 5 restuarants that serve the <food> in <c> city
     ## Learning Objective - Use Spark-SQL for this function
-    def get_top_restaurants(self, c, food):
+    def get_top_restaurants(self, c, food1):
         
         try:
             sc = self.sc
             sqlc = SQLContext(sc)
-            food = food
+            food = food1
             city = c
-            
-            # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
-            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
- 
-            # Just filter the restaurant business data (COUNT OF RECORDS = 25071)
-            #restrdd = bdf.rdd.filter(lambda x: "Restaurants" in x[2])
- 
-            # Store the restaurant business data in a temp table for querying
-            bdf.registerTempTable("business")
-            
-            # Read the Yelp Review data JSON file from HDFS and store all the columns in a dataframe
-            rdf = sqlc.read.json("/user/w205/project1/yelpreviewdata")
-            #rdf.printSchema()
 
-            # Filter only the rows where the user rating is greater than 2 
-            # Since we are interested only in the top rated restaurants, we filter out lower rated reviews
-            #reviewrdd = rdf.rdd.filter(lambda x: x[3] >2)
+            #Check if the Database already has the results of this request
+            df = sqlc.read.format("jdbc").options(url="jdbc:postgresql://localhost:5432/foodninjadb?user=w205&password=postgres", dbtable="toprestaurants",driver="org.postgresql.Driver").load()
+            resultrdd = df.rdd.filter(lambda x: city in x[0]).filter(lambda x: food in x[1])
 
-            # Store the review data in a temp table for querying
-            #sqlc.createDataFrame(reviewrdd).registerTempTable("review")
+            #If the Database has the data then display the result
+            if(resultrdd.count() > 0):
+                return sqlc.createDataFrame(resultrdd).collect()
 
-            rdf.registerTempTable("review")
-            
-            #Run the query to get the top 5 restaurants 
-            query = "select b.business_id, b.name as Restaurant_Name, count(*) as Num_Reviews, avg(r.stars) as Average_Rating, b.city as City from review r, business b where r.text like '%"+food+"%' AND r.stars>2 and r.business_id=b.business_id AND b.city='"+city+"' group by b.business_id, b.name, b.city order by Num_Reviews desc limit 5"
-            toprestaurants = sqlc.sql(query)
-            #toprestaurants.show()
-            #print("The query was "+query)
-            return toprestaurants.collect()
+            #Else run the pyspark job to get the result and display it
+            else:
+                
+                # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
+                bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
+     
+                # Store the restaurant business data in a temp table for querying
+                bdf.registerTempTable("business")
+                
+                # Read the Yelp Review data JSON file from HDFS and store all the columns in a dataframe
+                rdf = sqlc.read.json("/user/w205/project1/yelpreviewdata")
+                #rdf.printSchema()
+
+                # Filter only the rows where the user rating is greater than 2 
+                # Since we are interested only in the top rated restaurants, we filter out lower rated reviews
+                #reviewrdd = rdf.rdd.filter(lambda x: x[3] >2)
+
+                # Store the review data in a temp table for querying
+                #sqlc.createDataFrame(reviewrdd).registerTempTable("review")
+
+                rdf.registerTempTable("review")
+                
+                #Run the query to get the top 5 restaurants 
+                query = "select b.city as City, '"+ food + "' as FOOD, b.business_id as Bid, b.name as Name, count(*) as NReviews, avg(r.stars) as AvgRating  from review r, business b where r.text like '%"+food+"%' AND r.stars>2 and r.business_id=b.business_id AND b.city='"+city+"' group by b.business_id, b.name, b.city order by NReviews desc limit 5"
+                toprestaurants = sqlc.sql(query)
+                #toprestaurants is a dataframe
+                #toprestaurants.show()
+                #print("The query was "+query)
+
+                #Since this request was not in the Database, write it now to the database
+                props = {
+                    "user": "w205",
+                    "password": "postgres"
+                }
+                toprestaurants.write.jdbc(url="jdbc:postgresql://localhost:5432/foodninjadb", table="toprestaurants", mode="append", properties=props)
+
+                return toprestaurants.collect()
 
                         
         except Exception as inst:
             logger.info(inst.args)
             logger.info(inst)
             return "There was an error in the execution of this request. Please check the input and place the request again."
+
+       
 
     ## This Function is to get the Top 5 rated food items that are served in the <rest> restaurant in <c> city
     ## Learning Objective - Use PySpark for this function
@@ -75,6 +101,7 @@ class FoodSearchEngine:
             restaurant = rest
             sc=self.sc
             sqlc = SQLContext(sc)
+
             # Read the Yelp Business data JSON file and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
             bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type')
             bdf.cache()
@@ -115,7 +142,7 @@ class FoodSearchEngine:
 
                 logger.info("Before count word frequency ")
                 #count the frequency of the mentions of food
-                wordfreqdict = self.wordListToFreqDict(validwords)
+                wordfreqdict = self.wordListToFreqDict(validwords, city, restaurant)
 
                 logger.info("Before sort the words in decreasing order of frequency ")
                 #sort the words in decreasing order of frequency
@@ -139,8 +166,13 @@ class FoodSearchEngine:
 
     def removeStopwords(self, wordlist):
         return [w for w in wordlist if w in foodwords]
+        #w = []
+        #for word in wordlist:
+        #    if (word.encode('utf-8')) in foodwords:
+        #        w.append(word)
+        #return w
 
-    def wordListToFreqDict(self, wordlist):
+    def wordListToFreqDict(self, wordlist, city, restaurant):
         wordfreq = [wordlist.count(p) for p in wordlist]
         return dict(zip(wordlist,wordfreq))
 
@@ -149,6 +181,8 @@ class FoodSearchEngine:
         aux.sort()
         aux.reverse()
         return aux
+
+              
 
     def reviewcleanup(reviewcontent):
             # Split the tweet into words
@@ -192,19 +226,38 @@ class FoodSearchEngine:
             sc = self.sc
             sqlc = SQLContext(sc)
             foodcategory = category
+
+            #Check if the Database already has the results of this request
+            df = sqlc.read.format("jdbc").options(url="jdbc:postgresql://localhost:5432/foodninjadb?user=w205&password=postgres", dbtable="topcities",driver="org.postgresql.Driver").load()
+            resultrdd = df.rdd.filter(lambda x: foodcategory in x[0])
+
+            #If the Database has the data then display the result
+            if(resultrdd.count() > 0):
+                return sqlc.createDataFrame(resultrdd).collect()
+
+            #Else run the Spark-SQL job to get the result and display it
+            else:
              
-            # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
-            bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type', 'stars')
- 
-            # Store the restaurant business data in a temp table for querying
-            bdf.registerTempTable("business")
-            
-            #Run the query to get the 5 cities with poor ratings for the food category
-            query = "select count(*) as Num_Restaurants, avg(stars) as Average_Rating, city as City from business b where b.categories[1] like '%"+foodcategory+"%' group by b.city order by Average_Rating, Num_Restaurants, City asc limit 50"
-            topcities = sqlc.sql(query)
-            #topcities.show()
-            #print("The query was "+query)
-            return topcities.collect()
+                # Read the Yelp Business data JSON file from HDFS and store the required columns in a dataframe (COUNT OF RECORDS = 77445)
+                bdf = sqlc.read.json("/user/w205/project1/yelpbusinessdata").select('business_id', 'name', 'categories', 'city', 'full_address', 'review_count', 'state', 'type', 'stars')
+     
+                # Store the restaurant business data in a temp table for querying
+                bdf.registerTempTable("business")
+                
+                #Run the query to get the 5 cities with poor ratings for the food category
+                query = "select '"+ foodcategory + "' as Category, city as City, count(*) as Num_Restaurants, avg(stars) as Average_Rating  from business b where b.categories[1] like '%"+foodcategory+"%' group by b.city order by Average_Rating, Num_Restaurants, City asc limit 5"
+                topcities = sqlc.sql(query)
+                #topcities.show()
+                #print("The query was "+query)
+
+                #Since this request was not in the Database, write it now to the database
+                props = {
+                    "user": "w205",
+                    "password": "postgres"
+                }
+                topcities.write.jdbc(url="jdbc:postgresql://localhost:5432/foodninjadb", table="topcities", mode="append", properties=props)
+                
+                return topcities.collect()
 
                         
         except Exception as inst:
